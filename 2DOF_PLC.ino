@@ -6,6 +6,7 @@
 #include <PID_v1.h>
 //#include "RunningMedian.h"
 #include <Adafruit_PWMServoDriver.h>
+#include <SimpleKalmanFilter.h>
 
 double SERVOMIN = 250; // this is the 'minimum' pulse length count (out of 1000)
 double SERVOMAX = 750; // this is the 'maximum' pulse length count (out of 1000)
@@ -18,11 +19,11 @@ float x_plc_in = A10;
 float y_plc_in = A11;
 
 //Offsets for leveling the plate: Not all servos were at the same angle.
-#define XNOFFSET  -16 
-#define YPOFFSET  -34
+#define XNOFFSET  -16
+#define YPOFFSET  -32
 
-#define X_POSITION  4
-#define Y_POSITION  5
+#define X_POSITION  10
+#define Y_POSITION  11
 
 // X and Y are the ball location on the touchscreen
 double x,y = 0;
@@ -31,6 +32,10 @@ double x,y = 0;
 #define ID1   1
 #define ID2   2
 
+SimpleKalmanFilter kfx = SimpleKalmanFilter(12, 9, .01);
+SimpleKalmanFilter kfy = SimpleKalmanFilter(12, 9, .01);
+float xest;
+float yest;
 
 // These are our PID tuning gains. I turned off the derivative for now. It adds jitter, so we need to filter it.
 float xKp = .6; // 0.6 was good starting point                                                     
@@ -52,20 +57,14 @@ float syKi = 0.002;
 float syKd = 0.012;
 
 // PID parameters
-double xSetpoint, xInput, xOutput, x_angle, xOutput_filtered; //for X
-double ySetpoint, yInput, yOutput, y_angle, yOutput_filtered; //for Y
+double xInput, xOutput, x_angle, xOutput_filtered; //for X
+double yInput, yOutput, y_angle, yOutput_filtered; //for Y
 
-double xRaw, yRaw;
+double xRaw;
+double yRaw;
+//double xLast = 0;
+//double yLast = 0;
 
-
-// PID sampling time
-int Ts = 8; 
-
-//RunningMedian samplesX = RunningMedian(8);
-//RunningMedian samplesY = RunningMedian(8);
-
-//RunningMedian samplesX_out = RunningMedian(8);
-//RunningMedian samplesY_out = RunningMedian(8);
 
 
 
@@ -429,8 +428,10 @@ int readX()
   digitalWrite(7, LOW);  // set pin 7 to GND
   digitalWrite(8, HIGH); // set pin 8 to 5V
   digitalWrite(9, HIGH); // set pin 9 to 5V
-  delay(5);
+  //delay(5);
   xr = analogRead(0);
+  xest = kfx.updateEstimate(xr);
+  //return xest;
   return xr;
 }
 
@@ -446,8 +447,10 @@ int readY()
   digitalWrite(7, HIGH);  // set pin 7 to 5V
   digitalWrite(8, LOW);   // set pin 8 to GND
   digitalWrite(9, HIGH);  // set pin 9 to 5V
-  delay(5);
+  //delay(5);
   yr = analogRead(0);
+  yest = kfy.updateEstimate(yr);
+  //return yest;
   return yr;
 }
 
@@ -461,49 +464,59 @@ void setup() {
 
   pwm.begin();
   
-  pwm.setPWMFreq(60);  // Analog servos run at ~60 Hz updates
+  pwm.setPWMFreq(1000);  // Analog servos run at ~60 Hz updates
   
   //delay(10);
   
   x_angle = 0;
 
-  // Start each servo at the middle of the range of motion
-//  pwm.setPWM(Y_servo, 0, SERVOMID + YPOFFSET); // Offset to help with leveling
-//  pwm.setPWM(X_servo, 0, SERVOMID);
+  pinMode(X_POSITION, OUTPUT);
+  pinMode(Y_POSITION, OUTPUT);
+
+  //analogReadResolution(12);
+
+ // analogWriteResolution(12);
   
 }
 
 
 void loop() {
 
-  // Get the location of the ball (raw data)
-  xRaw = readX();
-  yRaw = readY();
+    // Get the location of the ball (raw data)
+    xRaw= readX();
+    //delay(10);
+    yRaw= readY();
   
-  // Convert the raw x and y data to millimeters (mm) by mapping the raw data to the touchscreen dimensions
-  // These values will be the inputs to our PID's
-  x = map(xRaw,264,730,0,4096); // Map these according to our touchscreen dimensions
-  y = map(yRaw,262,732,0,4096); // 271.27 x 205.74 or 248.87 x 187.40  
+    // Check if the touchscreen data is stable
+    //if ((abs(xLast - xRaw) < 20) && (abs(yLast - yRaw) < 20))
   
-  pwm.setPWM(X_POSITION, 0, x);
-  pwm.setPWM(Y_POSITION, 0, y); // Offset to help with leveling
- 
-
-  int plc_angle_x = analogRead(x_plc_in);
-  int plc_angle_y = analogRead(y_plc_in);
-  x_angle = map(plc_angle_x, 0, 1023, SERVOMIN, SERVOMAX);
-  y_angle = map(plc_angle_y, 0, 1023, SERVOMIN, SERVOMAX);
-
-  LobotSerialServoMove(Serial, ID1, x_angle + XNOFFSET, 0);
-  LobotSerialServoMove(Serial, ID2, y_angle - YPOFFSET, 0);
+    // Convert the raw x and y data to millimeters (mm) by mapping the raw data to the touchscreen dimensions
+    // These values will be the inputs to our PID's
+    x = map(xRaw,264,730,0,4096); // Map these according to our touchscreen dimensions ---- 264,730
+    y = map(yRaw,262,732,0,4096); // 271.27 x 205.74 or 248.87 x 187.40  ---- 262, 732
+    
+    pwm.setPWM(X_POSITION, 0, x);
+    pwm.setPWM(Y_POSITION, 0, y); // Offset to help with leveling
   
-  Serial.print(" xOutput = ");
-  Serial.print(plc_angle_x);
-  Serial.print("         yOutput = ");
-  Serial.print(plc_angle_y);
-  Serial.print("\n");
-
-
+    int plc_angle_x = analogRead(x_plc_in);
+    int plc_angle_y = analogRead(y_plc_in);
+    x_angle = map(plc_angle_x, 140, 900, SERVOMIN, SERVOMAX);
+    y_angle = map(plc_angle_y, 230, 810, SERVOMAX, SERVOMIN);
   
+    LobotSerialServoMove(Serial, ID1, x_angle + XNOFFSET, 0);
+    LobotSerialServoMove(Serial, ID2, y_angle - YPOFFSET, 0);
+  
+    //LobotSerialServoMove(Serial, ID1, x_angle, 0);
+    //LobotSerialServoMove(Serial, ID2, y_angle, 0);
+    
+    Serial.print(" plcx = ");
+    Serial.print(plc_angle_x);
+    Serial.print("         plcy = ");
+    Serial.print(plc_angle_y);
+    Serial.print("\n");
 
+
+
+  //xLast = xRaw;
+  //yLast = yRaw;
 }
