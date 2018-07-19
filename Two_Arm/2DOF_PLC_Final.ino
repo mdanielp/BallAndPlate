@@ -4,7 +4,6 @@
 
 #include <Wire.h>
 #include <PID_v1.h>
-//#include "RunningMedian.h"
 #include <Adafruit_PWMServoDriver.h>
 
 double SERVOMIN = 250; // this is the 'minimum' pulse length count (out of 1000)
@@ -13,7 +12,7 @@ double SERVOMID = (SERVOMIN + SERVOMAX) / 2; // this is the 'middle' pulse lengt
 
 Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver();
 
-
+// These are the pins that we read in the PLC servo angles on (A10 and A11)
 float x_plc_in = A10;
 float y_plc_in = A11;
 
@@ -21,6 +20,7 @@ float y_plc_in = A11;
 #define XNOFFSET  -32
 #define YPOFFSET  -48
 
+// These are the pins that we output the X and Y position of the ball to the PLC
 #define X_POSITION  10
 #define Y_POSITION  11
 
@@ -32,33 +32,12 @@ double x,y = 0;
 #define ID2   2
 
 
-// These are our PID tuning gains. I turned off the derivative for now. It adds jitter, so we need to filter it.
-float xKp = .6; // 0.6 was good starting point                                                     
-float xKi = 0.00;  // 0.005                                                    
-float xKd = 0.08;   // 0.08                        
-
-float yKp = 0.6;                                                       
-float yKi = 0.00;                                                      
-float yKd = 0.08;
-
-
-// Small tuning parameters for when the error is small
-float sxKp = 0.035;                                                      
-float sxKi = 0.002;                                                       
-float sxKd = 0.012;   
-
-float syKp = 0.035;                                                       
-float syKi = 0.002;                                                      
-float syKd = 0.012;
 
 // PID parameters
-double xInput, xOutput, x_angle, xOutput_filtered; //for X
-double yInput, yOutput, y_angle, yOutput_filtered; //for Y
+double xInput, xOutput, x_angle; //for X
+double yInput, yOutput, y_angle; //for Y
 
 double xRaw, yRaw;
-
-
-
 
 
 #define GET_LOW_BYTE(A) (uint8_t)((A))
@@ -453,19 +432,12 @@ void setup() {
 
   pwm.begin();
   
+  // This is super important! The PWM freq needs to be 1000Hz!
   pwm.setPWMFreq(1000);  // Analog servos run at ~60 Hz updates
   
-  //delay(10);
-  
-  x_angle = 0;
 
   pinMode(X_POSITION, OUTPUT);
   pinMode(Y_POSITION, OUTPUT);
-
-  //analogReadResolution(12);
-
- // analogWriteResolution(12);
-  
 }
 
 
@@ -480,30 +452,33 @@ void loop() {
   x = map(xRaw,264,730,0,4096); // Map these according to our touchscreen dimensions ---- 264,730
   y = map(yRaw,262,732,0,4096); // 271.27 x 205.74 or 248.87 x 187.40  ---- 262, 732
   
+  
+  // Output the X and Y position of the ball using PWM (this voltage is read in by the PLC)
   pwm.setPWM(X_POSITION, 0, x);
   pwm.setPWM(Y_POSITION, 0, y); // Offset to help with leveling
 
-  
-  //analogWrite(X_POSITION, xRaw);
-  //analogWrite(Y_POSITION, yRaw);
 
-
+  // Read in what the PLC is outputting. These are the servo angles from the PLC, read in as a voltage
   int plc_angle_x = analogRead(x_plc_in);
   int plc_angle_y = analogRead(y_plc_in);
+  
+  // Map the PLC servo angles to a value that the servos can understand 
+  // The LX-16A servos can move to a position from 0 to 1000 
   x_angle = map(plc_angle_x, 140, 900, SERVOMIN, SERVOMAX);
   y_angle = map(plc_angle_y, 230, 810, SERVOMAX, SERVOMIN);
 
+  
+  // This code moves the servo motors to x_angle and y_angle
   LobotSerialServoMove(Serial, ID1, x_angle + XNOFFSET, 0);
   LobotSerialServoMove(Serial, ID2, y_angle - YPOFFSET, 0);
 
-  //LobotSerialServoMove(Serial, ID1, x_angle, 0);
-  //LobotSerialServoMove(Serial, ID2, y_angle, 0);
   
-  Serial.print(" plcx = ");
-  Serial.print(plc_angle_x);
-  Serial.print("         plcy = ");
-  Serial.print(plc_angle_y);
-  Serial.print("\n");
+  //This code helps to debug the program by seeing what the touchscreen is seeing
+  //Serial.print(" plcx = ");
+  //Serial.print(plc_angle_x);
+  //Serial.print("         plcy = ");
+  //Serial.print(plc_angle_y);
+  //Serial.print("\n");
 
 
   
